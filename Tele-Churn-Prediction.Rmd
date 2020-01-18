@@ -1,5 +1,5 @@
 ---
-title: "ALY6020_Final_Project"
+title: "Tele-Churn-Prediction"
 author: "Yuhe Gu"
 date: "3/27/2019"
 output: pdf_document
