@@ -1,0 +1,366 @@
+---
+title: "ALY6020_Final_Project"
+author: "Yuhe Gu"
+date: "3/27/2019"
+output: pdf_document
+---
+
+# Summary
+
+Telecommunication company, also know as a telco, is a kind of company to provide telecommunications service and also provides the Television servise and Internet services. With the development of the global requirement in telecommunication and connection service, the telecommunications company is needed to expand there service and acquire more customers. 
+
+Customer Churn is one of the biggest problems facing most businesses to solve. According to Harvard Business Review, it costs between 5 times and 25 times as much to find a new customer than to retain an existing one. In other words, your existing customers are worth their weight in gold (Heintz, 2018). 
+
+If we have the model to predict a customer, or a group of customer have high probability to churn, the telecommunication company may make some business strategies, such as putting out new discount packages to these customers. Moreover, the results from the predictive model could also provide the prediction of the profits. 
+
+To gain profits, It is important to retain customers. Therefore, the goal of this project is to predict behaviors of churn or not churn to help retain customers.
+
+# Introduction
+
+In the Telco Customer Churn dataset, each row refers to a single customer with 20 different attributes.
+
+The attributes include: 
+
+Churn: Customers who left within the last month
+
+Services that each customer has signed up for – phone, multiple lines, internet, online security, online backup, device protection, tech support, and streaming TV and movies.  
+
+Customer account information – how long they’ve been a customer (tenure), contract, payment method, paperless billing, monthly charges, and total charges.  
+
+Demographic information about customers – gender, age range, partners, and dependents. 
+
+In the following analysis, we will research on these attributes whether they influence the result (churn or not churn), and how much they influence.  
+
+# Implementation of the project
+
+```{r echo=TRUE, warning = FALSE, message=FALSE}
+#Library
+library(readr)
+library(ggplot2)
+library(DataExplorer)
+library(dplyr)
+library(tidyr)
+library(corrplot)
+library(caret)
+#install.packages("rms")
+library(rms)
+library(MASS)
+library(e1071)
+#install.packages("ROCR")
+library(ROCR)
+library(gplots)
+library(pROC)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+#install.packages("ggpubr")
+library(ggpubr)
+```
+
+## Data Manipulation
+
+### Import the Data
+```{r warning = FALSE, message=FALSE}
+telecom <- read.csv("WA_Fn-UseC_-Telco-Customer-Churn.csv")
+```
+
+### Show the summary of the dataset
+```{r warning = FALSE, message=FALSE}
+str(telecom)
+summary(telecom)
+```
+
+### Observations with Missing Values
+According to the summary above, there are 11 missing values in the TotalCharges column, which account for 0.16% of the observations, which is a small number, and removing those 11 rows with missing values will not bring large influence to the final results. 
+
+The follwing code is removing the missing values from the datasets.
+```{r warning = FALSE, message=FALSE}
+telecom <- telecom[complete.cases(telecom),] 
+```
+
+### Check Churn Rate for the full dataset
+```{r warning = FALSE, message=FALSE}
+telecom %>%
+  summarise(Total = n(), n_Churn = sum(Churn == "Yes"), p_Churn = n_Churn/Total)
+```
+There are about 26.6% of customers churn. 
+
+## Exploratory Data Analysis
+
+### Data Distributions
+
+In this part, we will visulize the distributions of continuous variables to make some comparison. 
+```{r warning = FALSE, message=FALSE}
+ggplot(data = telecom, aes(MonthlyCharges, col = Churn))+
+  geom_freqpoly()
+```
+
+From the plot above, we can conclude that if a customer with less than 25 dollars Monthly charge, they have high probability to churn. On the other hand, if the customer with larger than 30 dollars monthly charge, the distributions of the customers who churn or not are similar (and the churn rate is lower than not churn). 
+
+```{r warning = FALSE, message=FALSE}
+ggplot(data = telecom, aes(TotalCharges, col = Churn))+
+  geom_freqpoly()
+```
+
+In terms of the TotalCharges, it is highly positive skew for all customers no matter whether they churned or not. 
+
+```{r warning = FALSE, message=FALSE}
+ggplot(data = telecom, aes(tenure, col = Churn))+
+  geom_freqpoly()
+```
+
+In terms of the tenure, the distributions are very different between customers who churned and who didn't churn. 
+From the plot, we can conclude that a customer are more likely to quit the telecommunication company in the first few month, and the more they have used the service, they will mot quit the seiverce. Moreover, this company has a huge number of customers who have been in the service more than sixty months, which means more than five years. These group of customer is the "old customer" for the business. 
+ 
+
+```{r warning = FALSE, message=FALSE}
+plot_correlation(telecom[,c("TotalCharges", "MonthlyCharges", "tenure")]) 
+```
+
+The plot shows high correlations between Totalcharges & tenure and between TotalCharges & MonthlyCharges. In the modeling part, we will consider the correlation when we build the model to increase the models' accuracy for prediction. 
+
+### Categorical Variables
+
+In this part, we will research on how the customers' demographic information influence on the customer churn. 
+
+```{r warning = FALSE, message=FALSE}
+ggplot(data = telecom) +
+  geom_bar(mapping = aes(x = gender, fill = Churn), position = "fill", stat = "count")
+ggplot(data = telecom) +
+  geom_bar(mapping = aes(x = SeniorCitizen, fill = Churn), position = "fill", stat = "count")
+ggplot(data = telecom) +
+  geom_bar(mapping = aes(x = Partner, fill = Churn), position = "fill", stat = "count")  
+ggplot(data = telecom) +
+  geom_bar(mapping = aes(x = Dependents, fill = Churn), position = "fill", stat = "count") 
+ggplot(data = telecom) +
+  geom_bar(mapping = aes(x = PhoneService, fill = Churn), position = "fill", stat = "count")
+ggplot(data = telecom) +
+  geom_bar(mapping = aes(x = InternetService, fill = Churn), position = "fill", stat = "count") 
+```
+From the plot, we can conclude: 
+
+Genders and phone service have no influences on the customer churn.    
+The senior customers have higher churn rate.   
+The customers who have partners or dependents have lower churn rate.
+
+The tenure refers to how many months that a customer been in the service. In order to get better analysis, we change the column to a factor with 5 levels, with each level represents a bin of tenure in years. 
+```{r warning = FALSE, message=FALSE}
+telecom %>%
+  mutate(tenure_year = case_when(tenure <= 12 ~ "0-1",
+                                 tenure > 12 & tenure <= 24 ~ "1-2",
+                                 tenure > 24 & tenure <= 36 ~ "2-3",
+                                 tenure > 36 & tenure <= 48 ~ "3-4",
+                                 tenure > 48 & tenure <= 60 ~ "4-5",
+                                 tenure > 60 & tenure <= 72 ~ "5-6")) -> telecom
+telecom$tenure <-NULL
+table(telecom$tenure_year)
+```
+
+# Data Analysis
+
+## Logistic Regression Model
+
+In order to build the logistic regression model, we change the categorical content such as "yes" and "no" into 1 and 0. 
+The columns we modify are: Churn, gender, Partner, PhoneService, Dependents, PaperlessBilling
+
+```{r warning = FALSE, message=FALSE}
+telecom_LR <- telecom
+telecom_LR$Churn <- ifelse(telecom_LR$Churn == "Yes", 1, 0)
+telecom_LR$gender <- ifelse(telecom_LR$gender == "Female", 1, 0)
+telecom_LR$Partner <- ifelse(telecom_LR$Partner == "Yes", 1, 0)
+telecom_LR$PhoneService <- ifelse(telecom_LR$PhoneService == "Yes", 1, 0)
+telecom_LR$Dependents <- ifelse(telecom_LR$Dependents == "Yes", 1, 0)
+telecom_LR$PaperlessBilling <- ifelse(telecom_LR$PaperlessBilling == "Yes", 1, 0)
+#remove the columns we will not use
+telecom_LR <- telecom_LR[,-c(1, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17)]
+str(telecom_LR)
+```
+
+Create the data into traning and testing datasets (80% vs 20%)
+
+```{r warning = FALSE, message=FALSE}
+
+set.seed(1)
+trainindex = createDataPartition(telecom_LR$Churn, p=0.80, list=FALSE)
+train = telecom_LR[trainindex,]
+test = telecom_LR[-trainindex,]
+
+```
+
+### Train Model
+ 
+```{r warning = FALSE, message=FALSE}
+model <- glm(Churn ~., family = "binomial", data = train)
+summary(model)
+```
+
+### Testing Model
+
+```{r warning = FALSE, message=FALSE}
+train_prob <- predict(model, data = train, type = "response")
+test_prob <- predict(model, newdata = test, type = "response")
+```
+
+Set the cut-off value as 0.5.
+
+```{r warning = FALSE, message=FALSE}
+train_pre <- factor(ifelse(train_prob >= 0.5, "Yes", "No"))
+train_actual <- factor(ifelse(train$Churn == 1, "Yes", "No"))
+test_pre <- factor(ifelse(test_prob >= 0.5, "Yes", "No"))
+test_actual <- factor(ifelse(test$Churn == 1, "Yes", "No"))
+```
+
+### Confusion Matrix and AUC for the logistic regression model
+
+For the Training Set:
+```{r warning = FALSE, message=FALSE}
+confusionMatrix(data = train_pre, reference = train_actual)
+roc <- roc(train$Churn, train_prob, plot= TRUE, print.auc=TRUE)
+```
+
+For the Testing Set: 
+```{r warning = FALSE, message=FALSE}
+confusionMatrix(data = test_pre, reference = test_actual)
+roc <- roc(test$Churn, test_prob, plot= TRUE, print.auc=TRUE)
+```
+
+For the training set, the accuracy is 0.79 and the AUC is 0.82. For the testing set, the accuracy is 0.79 and the AUC is 0.82. It's a good model because the accuracy and AUC do not have big difference between the training and testing sets, and it has high sensitivity, and relatively low specificity.  
+
+
+# Decision Tree
+
+## Data Preparation
+
+```{r warning = FALSE, message=FALSE}
+telecomDT <- telecom
+telecomDT <- telecom[, -c(1)]
+telecomDT %>%
+  mutate_if(is.character, as.factor) -> telecomDT
+str(telecomDT)
+```
+
+Split the data into training and test sets.
+```{r warning = FALSE, message=FALSE}
+set.seed(1)
+trainindex = createDataPartition(telecom_LR$Churn, p=0.80, list=FALSE)
+trainDT = telecomDT[trainindex,]
+testDT = telecomDT[-trainindex,]
+```
+
+### Train Model
+That Totalcharges, MonthlyCharges and tenure are highly correlated, which may effect the performance of the decision tree models, so I remove the TotalCharges column to train the decision tree model.
+
+```{r warning = FALSE, message=FALSE}
+modelDT <- rpart(formula = Churn ~ gender + SeniorCitizen + Partner + Dependents + PhoneService + 
+                       MultipleLines + InternetService + OnlineSecurity + TechSupport +
+                       OnlineBackup + DeviceProtection + StreamingTV + StreamingMovies + 
+                       Contract + PaperlessBilling + tenure_year +
+                       PaymentMethod + MonthlyCharges, data = trainDT, 
+                       method = "class", parms = list(split = "gini"))
+```
+
+### Plot the Tree
+```{r warning = FALSE, message=FALSE}
+prp(modelDT, type = 1, extra = 1, split.font = 1, varlen = -10)
+```
+
+### Test Model
+
+```{r warning = FALSE, message=FALSE}
+trainDT_pre <- predict(modelDT, data = trainDT, type = "class")
+trainDT_prob <- predict(modelDT, data = trainDT, type = "prob")
+testDT_pre <- predict(modelDT, newdata= testDT, type = "class")
+testDT_prob <- predict(modelDT, newdata = testDT, type = "prob")
+```
+
+### Confusion Matrix and AUC for the decision tree model
+
+For the Training Set
+```{r warning = FALSE, message=FALSE}
+confusionMatrix(data = trainDT_pre, reference = trainDT$Churn)
+trainDT_actual <- ifelse(trainDT$Churn == "Yes", 1,0)
+roc <- roc(trainDT_actual, trainDT_prob[,2], plot= TRUE, print.auc=TRUE)
+```
+
+For the Testing Set:
+```{r warning = FALSE, message=FALSE}
+confusionMatrix(data = testDT_pre, reference = testDT$Churn)
+testDT_actual <- ifelse(testDT$Churn == "Yes", 1,0)
+roc <- roc(testDT_actual, testDT_prob[,2], plot = TRUE, print.auc = TRUE)
+```
+
+For the training set, the Accuracy is 0.795 and the AUC is 0.800. For the testing set, the accuracy is 0.790 and the AUC is 0.792. Therefore, the model is good. 
+
+# Random Forest
+
+### Train Model
+```{r warning = FALSE, message=FALSE}
+modelRF <- randomForest(formula = Churn ~., data = trainDT, ntree = 300)
+print(modelRF)
+```
+
+### Variable Importance
+```{r warning = FALSE, message=FALSE}
+varImpPlot(modelRF,type=2)
+```
+
+### Test Model
+```{r warning = FALSE, message=FALSE}
+trainRF_pre <- predict(modelRF, trainDT, type = "class")
+trainRF_prob <- predict(modelRF, trainDT, type = "prob")
+testRF_pre <- predict(modelRF, newdata = testDT, type = "class")
+testRF_prob <- predict(modelRF, newdata = testDT, type = "prob")
+```
+
+### Cross Validation for the random forest model
+
+For the Training Set: 
+```{r warning = FALSE, message=FALSE}
+confusionMatrix(data = trainRF_pre, reference = trainDT$Churn)
+trainRF_actual <- ifelse(trainDT$Churn == "Yes", 1,0)
+roc <- roc(trainRF_actual, trainRF_prob[,2], plot= TRUE, print.auc=TRUE)
+```
+
+For the Test Set:
+```{r warning = FALSE, message=FALSE}
+confusionMatrix(data = testRF_pre, reference = testDT$Churn)
+testRF_actual <- ifelse(testDT$Churn == "Yes", 1,0)
+roc <- roc(testRF_actual, testRF_prob[,2], plot = TRUE, print.auc = TRUE)
+```
+
+For the training set, the Accuracy is 0.974 and the AUC is 0.994. For the testing set, the Accuracy is 0.792 and the AUC is 0.832. Therefore, the model is overfitting. 
+
+# Comparison of ROC for the three models
+
+For this project, we are more willing to focus on the customer who quit the service, so it is important to research on the "yes" group. Therefore, ROC Curve is important for us. 
+```{r warning = FALSE, message=FALSE}
+pre_list <- list(test_prob, testDT_prob[,2], testRF_prob[,2])
+m <- length(pre_list)
+testDT$Churn <- ifelse(testDT$Churn == "Yes", 1, 0)
+actual_list <- rep(list(testDT$Churn), m)
+
+pre <- prediction(pre_list, actual_list)
+rocs <- performance(pre, "tpr", "fpr")
+plot(rocs, col = as.list(1:m), main = "ROC Curves for 3 Models")
+legend(x = "bottomright",
+       legend = c("Logistic Regression", "Decision Tree", "Random Forest"),
+       fill = 1:m)
+```
+
+Each point in ROC curve represents classification result (probability) compared to a predetermined cut-off value; AUC is the probability that randomly chosen positive samples is ranked above randomly chosen nagative ones. 
+From the plot above, we can conclude that random forest and logistic regression perform better than decision tree. In total, these three model all perform good for the testing dataset. In the future analysis, it is better to usage some other ensamble skills to increase the accuracy and AUC value. 
+
+# Discussion
+
+In this project, we build three models for prediction of customer churn in teleco, and logistic regression performs best of the three models. Although random forest is an overfitting model in this project, it also has high accuracy for testing dataset, so we can also use random forest model in prediction. Random forest gives better results with the increasing number of examples. It might be used for clustering, statistical inference and feature selection as well, and it Works good with numerical and categorical data. 
+
+For the logistic regression model, in the future analysis, we can try and test different cut-off values' performance, and then we can choose the cut-off value with the highest accuracy. 
+
+In addition, except for the random forest model, we can use other resemble skills, such as bagging the support vector machine, logistic regression, or other data mining method to got a better results of prediction. 
+
+# Reference
+
+Heintz, Brenner. (2018). Cutting the Cord: Predicting Customer Churn for a Telecom Company. Retrieved from https://towardsdatascience.com/cutting-the-cord-predicting-customer-churn-for-a-telecom-company-268e65f177a5
+
+Telco Customer Churn. https://www.kaggle.com/blastchar/telco-customer-churn
+
